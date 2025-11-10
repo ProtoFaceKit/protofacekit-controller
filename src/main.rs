@@ -201,6 +201,8 @@ async fn gatt_events_task<'m, P: PacketPool>(
                                 }
                             };
 
+                            defmt::info!("beginning face");
+
                             face.reset();
                         } else if event.handle() == display_face.handle {
                             if mutex_guard.take().is_none() {
@@ -208,6 +210,7 @@ async fn gatt_events_task<'m, P: PacketPool>(
                             }
 
                             // Mutex has been dropped, control has returned to the renderer
+                            defmt::info!("finished face");
                         } else if event.handle() == begin_expression.handle {
                             let face = match mutex_guard.as_mut() {
                                 Some(value) => value,
@@ -288,10 +291,10 @@ async fn advertise<'values, 'server, C: Controller>(
     server: &'server Server<'values>,
 ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
     let mut advertiser_data = [0; 31];
+
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
             AdStructure::CompleteLocalName(name.as_bytes()),
         ],
         &mut advertiser_data[..],

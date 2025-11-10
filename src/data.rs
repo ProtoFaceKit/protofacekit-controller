@@ -7,10 +7,10 @@ const FRAME_WIDTH: usize = DISPLAY_WIDTH * DISPLAYS;
 const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 
 /// Maximum number of frames allowed for the whole "face"
-const MAX_FRAMES_PER_FACE: usize = 300;
+const MAX_FRAMES_PER_FACE: usize = 200;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 200;
+const MAX_UNCOMPRESSED_FRAMES: usize = 16;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
@@ -177,7 +177,7 @@ pub struct FaceExpression {
 /// Represents a run-length encoded pixel data
 pub struct RLEPixelData {
     /// Run of the pixel data
-    pub length: u16,
+    pub length: u8,
     pub r: u8,
     pub g: u8,
     pub b: u8,
@@ -186,15 +186,10 @@ pub struct RLEPixelData {
 impl RLEPixelData {
     /// Try and obtain a [RLEPixelData] from a byte iterator
     pub fn from_iterator<'a, I: Iterator<Item = &'a u8>>(iter: &mut I) -> Option<RLEPixelData> {
-        let length_byte_1 = iter.next()?;
-        let length_byte_2 = iter.next()?;
-
+        let length = *iter.next()?;
         let r = *iter.next()?;
         let g = *iter.next()?;
         let b = *iter.next()?;
-
-        let length = u16::from_be_bytes([*length_byte_1, *length_byte_2]);
-
         Some(Self { length, r, g, b })
     }
 }
