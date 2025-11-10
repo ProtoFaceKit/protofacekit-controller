@@ -6,6 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 
+use crate::data::{Expression, Face, RLESlicePixelIterator};
 use crate::neopixel::{FRAME_BUFFER_SIZE, PIXEL_COUNT, create_neopixel_driver};
 use blinksy::color::{ColorCorrection, LinearSrgb};
 use blinksy::driver::DriverAsync;
@@ -13,9 +14,9 @@ use bt_hci::controller::ExternalController;
 use core::iter::{self, Once};
 use defmt::info;
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
-use embassy_futures::select::select;
-use embassy_time::Timer;
+use embassy_futures::join::join3;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::{Mutex, MutexGuard};
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
@@ -29,6 +30,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 extern crate alloc;
 
+mod data;
 mod neopixel;
 
 const CONNECTIONS_MAX: usize = 1;
@@ -41,19 +43,31 @@ esp_bootloader_esp_idf::esp_app_desc!();
 // GATT Server definition
 #[gatt_server]
 struct Server {
-    battery_service: BatteryService,
+    face_service: ProtoFaceService,
 }
 
-/// Battery service
-#[gatt_service(uuid = service::BATTERY)]
-struct BatteryService {
-    /// Battery Level
-    #[descriptor(uuid = descriptors::VALID_RANGE, read, value = [0, 100])]
-    #[descriptor(uuid = descriptors::MEASUREMENT_DESCRIPTION, name = "hello", read, value = "Battery Level")]
-    #[characteristic(uuid = characteristic::BATTERY_LEVEL, read, notify, value = 10)]
-    level: u8,
-    #[characteristic(uuid = "408813df-5dd4-1f87-ec11-cdb001100000", write, read, notify)]
-    status: bool,
+/// Service for controlling the ProtoFace display
+#[gatt_service(uuid = "bd6f7967-023c-4f0b-aad4-16a8a116f62c")]
+struct ProtoFaceService {
+    /// Begin face upload
+    #[characteristic(uuid = "2a3f5ae2-c3bd-4561-945b-ea5da0787576", write)]
+    begin_face: bool,
+
+    /// Display the stored face
+    #[characteristic(uuid = "e66d5e7a-7458-4d71-b625-331062166d74", write)]
+    display_face: bool,
+
+    /// Set the current expression that is being written
+    #[characteristic(uuid = "d82855fb-c9ae-4322-9839-89d23839c569", write)]
+    expression: u8,
+
+    /// Begin writing a frame, specifies the duration of the frame in milliseconds
+    #[characteristic(uuid = "21bced55-0b96-4711-a0f5-cd9653aca013", write)]
+    begin_frame: u8,
+
+    /// Frame data chunks
+    #[characteristic(uuid = "05940bf3-cc0f-4349-8ae4-e2bb89385540", write)]
+    frame_chunk: heapless::Vec<u8, 248>,
 }
 
 #[esp_rtos::main]
@@ -114,13 +128,13 @@ async fn main(_spawner: Spawner) {
         .await
         .unwrap();
 
-    let _ = join(ble_task(runner), async {
+    let face: Mutex<CriticalSectionRawMutex, Face> = Mutex::new(Face::default());
+
+    let _ = join3(ble_task(runner), render_task(&face), async {
         loop {
             match advertise("ProtoFaceKit", &mut peripheral, &server).await {
                 Ok(conn) => {
-                    let a = gatt_events_task(&server, &conn);
-                    let b = custom_task(&server, &conn, &stack);
-                    select(a, b).await;
+                    _ = gatt_events_task(&server, &conn, &face).await;
                 }
                 Err(e) => {
                     let e = defmt::Debug2Format(&e);
@@ -134,6 +148,11 @@ async fn main(_spawner: Spawner) {
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples/src/bin
 }
 
+/// Task to render the face
+async fn render_task<'m>(face: &'m Mutex<CriticalSectionRawMutex, Face>) {
+    // TODO: Render face to hub75
+}
+
 /// This is a background task that is required to run forever alongside any other BLE tasks.
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {
@@ -145,31 +164,101 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 ///
 /// This function will handle the GATT events and process them.
 /// This is how we interact with read and write requests.
-async fn gatt_events_task<P: PacketPool>(
+async fn gatt_events_task<'m, P: PacketPool>(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
+    face: &'m Mutex<CriticalSectionRawMutex, Face>,
 ) -> Result<(), Error> {
-    let level = server.battery_service.level;
+    let begin_face = server.face_service.begin_face;
+    let display_face = server.face_service.display_face;
+    let expression = server.face_service.expression;
+    let begin_frame = server.face_service.begin_frame;
+    let frame_chunk = &server.face_service.frame_chunk;
+
+    let mut mutex_guard: Option<MutexGuard<'m, CriticalSectionRawMutex, Face>> = None;
+
+    // let level = server.battery_service.level;
     let _reason = loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => break reason,
             GattConnectionEvent::Gatt { event } => {
                 match &event {
-                    GattEvent::Read(event) => {
-                        if event.handle() == level.handle {
-                            // This is how the client reads changes
-                            let value = server.get(&level);
-                            let value = defmt::Debug2Format(&value);
-                            defmt::info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-                        }
+                    GattEvent::Read(_event) => {
+                        // if event.handle() == level.handle {
+                        //     // This is how the client reads changes
+                        //     let value = server.get(&level);
+                        //     let value = defmt::Debug2Format(&value);
+                        //     defmt::info!("[gatt] Read Event to Level Characteristic: {:?}", value);
+                        // }
                     }
                     GattEvent::Write(event) => {
-                        if event.handle() == level.handle {
-                            // This is how the client writes changes
-                            defmt::info!(
-                                "[gatt] Write Event to Level Characteristic: {:?}",
-                                event.data()
-                            );
+                        if event.handle() == begin_face.handle {
+                            let face = match mutex_guard.as_mut() {
+                                Some(value) => value,
+                                None => {
+                                    let guard = face.lock().await;
+                                    mutex_guard.insert(guard)
+                                }
+                            };
+
+                            face.reset();
+                        } else if event.handle() == display_face.handle {
+                            if mutex_guard.take().is_none() {
+                                todo!("err mutex guard was never held")
+                            }
+
+                            // Mutex has been dropped, control has returned to the renderer
+                        } else if event.handle() == expression.handle {
+                            let face = match mutex_guard.as_mut() {
+                                Some(value) => value,
+                                None => {
+                                    todo!("error render task owns the face, didn't begin face");
+                                }
+                            };
+
+                            let data = event.data();
+                            let value = *data.first().expect("expression must provided the value");
+                            let expression =
+                                Expression::from_value(value).expect("invalid expression value");
+
+                            defmt::info!("beginning expression");
+
+                            if let Err(_error) = face.begin_expression(expression) {
+                                todo!("handle begin expression error");
+                            }
+                        } else if event.handle() == begin_frame.handle {
+                            let face = match mutex_guard.as_mut() {
+                                Some(value) => value,
+                                None => {
+                                    todo!("error render task owns the face, didn't begin face");
+                                }
+                            };
+
+                            let data = event.data();
+                            let duration =
+                                *data.first().expect("begin frame must provided the value");
+
+                            defmt::info!("beginning frame");
+
+                            if let Err(_error) = face.begin_frame(duration) {
+                                todo!("handle begin frame error");
+                            }
+                        } else if event.handle() == frame_chunk.handle {
+                            let face = match mutex_guard.as_mut() {
+                                Some(value) => value,
+                                None => {
+                                    todo!("error render task owns the face, didn't begin face");
+                                }
+                            };
+
+                            let data = event.data();
+                            let pixels = RLESlicePixelIterator::new(data);
+
+                            defmt::info!("writing pixel data");
+
+                            if let Err(_error) = face.push_pixels(pixels) {
+                                todo!("handle begin frame error");
+                            }
                         }
                     }
                     _ => {}
@@ -220,35 +309,4 @@ async fn advertise<'values, 'server, C: Controller>(
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
     defmt::info!("[adv] connection established");
     Ok(conn)
-}
-
-/// Example task to use the BLE notifier interface.
-/// This task will notify the connected central of a counter value every 2 seconds.
-/// It will also read the RSSI value every 2 seconds.
-/// and will stop when the connection is closed by the central or an error occurs.
-async fn custom_task<C: Controller, P: PacketPool>(
-    server: &Server<'_>,
-    conn: &GattConnection<'_, '_, P>,
-    stack: &Stack<'_, C, P>,
-) {
-    let mut tick: u8 = 0;
-    let level = server.battery_service.level;
-    loop {
-        tick = tick.wrapping_add(1);
-        defmt::info!("[custom_task] notifying connection of tick {}", tick);
-        if level.notify(conn, &tick).await.is_err() {
-            defmt::info!("[custom_task] error notifying connection");
-            break;
-        };
-        // read RSSI (Received Signal Strength Indicator) of the connection.
-        if let Ok(rssi) = conn.raw().rssi(stack).await {
-            // Got RSSI
-            defmt::info!("[custom_task] RSSI: {:?}", rssi);
-        } else {
-            // ERR
-            defmt::info!("[custom_task] error getting RSSI");
-            break;
-        };
-        Timer::after_secs(2).await;
-    }
 }

@@ -6,6 +6,7 @@
     "blinksy",
     "uninit",
     "LinearSrgb",
-    "Clockless"
+    "Clockless",
+    "heapless"
   ]
 }
