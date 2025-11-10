@@ -6,11 +6,11 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use blinksy::color::LinearSrgb;
-use blinksy_esp::time::elapsed;
+use crate::neopixel::{FRAME_BUFFER_SIZE, PIXEL_COUNT, create_neopixel_driver};
+use blinksy::color::{ColorCorrection, LinearSrgb};
+use blinksy::driver::DriverAsync;
 use bt_hci::controller::ExternalController;
-use core::cell::RefCell;
-use critical_section::Mutex;
+use core::iter::{self, Once};
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -21,8 +21,6 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::*;
-
-use crate::neopixel::{NeoPixelControl, NeoPixelStateColor, create_neopixel_state_control};
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -58,27 +56,8 @@ struct BatteryService {
     status: bool,
 }
 
-#[derive(Clone, Copy)]
-pub enum NeoPixelState {
-    Starting,
-    Running,
-}
-
-pub static STATE: Mutex<RefCell<NeoPixelState>> = Mutex::new(RefCell::new(NeoPixelState::Starting));
-
-pub struct GlobalState(&'static Mutex<RefCell<NeoPixelState>>);
-
-impl NeoPixelStateColor for GlobalState {
-    fn state_color(&self) -> LinearSrgb {
-        critical_section::with(|cs| match &*self.0.borrow_ref(cs) {
-            NeoPixelState::Starting => LinearSrgb::new(1.0, 0.0, 0.0),
-            NeoPixelState::Running => LinearSrgb::new(0.0, 1.0, 0.0),
-        })
-    }
-}
-
 #[esp_rtos::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -89,9 +68,15 @@ async fn main(spawner: Spawner) {
 
     info!("Embassy initialized!");
 
-    let mut control: NeoPixelControl<'static, GlobalState> =
-        create_neopixel_state_control(peripherals.GPIO4, peripherals.RMT, GlobalState(&STATE));
-    control.set_brightness(0.01);
+    let mut driver = create_neopixel_driver(peripherals.GPIO4, peripherals.RMT);
+    driver
+        .show::<PIXEL_COUNT, FRAME_BUFFER_SIZE, Once<LinearSrgb>, LinearSrgb>(
+            iter::once(LinearSrgb::new(1.0, 0.0, 0.0)),
+            0.01,
+            ColorCorrection::default(),
+        )
+        .await
+        .unwrap();
 
     let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
     // find more examples https://github.com/embassy-rs/trouble/tree/main/examples/esp32
@@ -120,13 +105,14 @@ async fn main(spawner: Spawner) {
     }))
     .unwrap();
 
-    spawner.spawn(tick_neopixel(control)).unwrap();
-
-    Timer::after_secs(5).await;
-
-    critical_section::with(|cs| {
-        STATE.replace(cs, NeoPixelState::Running);
-    });
+    driver
+        .show::<PIXEL_COUNT, FRAME_BUFFER_SIZE, Once<LinearSrgb>, LinearSrgb>(
+            iter::once(LinearSrgb::new(0.0, 1.0, 0.0)),
+            0.01,
+            ColorCorrection::default(),
+        )
+        .await
+        .unwrap();
 
     let _ = join(ble_task(runner), async {
         loop {
@@ -146,15 +132,6 @@ async fn main(spawner: Spawner) {
     .await;
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples/src/bin
-}
-
-// Run a tick on the neo pixel LED
-#[embassy_executor::task]
-async fn tick_neopixel(mut control: NeoPixelControl<'static, GlobalState>) {
-    loop {
-        let elapsed_in_ms = elapsed().as_millis();
-        control.tick(elapsed_in_ms).await.unwrap();
-    }
 }
 
 /// This is a background task that is required to run forever alongside any other BLE tasks.
