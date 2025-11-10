@@ -57,9 +57,9 @@ struct ProtoFaceService {
     #[characteristic(uuid = "e66d5e7a-7458-4d71-b625-331062166d74", write)]
     display_face: bool,
 
-    /// Set the current expression that is being written
+    /// Begin the provided expression type
     #[characteristic(uuid = "d82855fb-c9ae-4322-9839-89d23839c569", write)]
-    expression: u8,
+    begin_expression: u8,
 
     /// Begin writing a frame, specifies the duration of the frame in milliseconds
     #[characteristic(uuid = "21bced55-0b96-4711-a0f5-cd9653aca013", write)]
@@ -171,7 +171,7 @@ async fn gatt_events_task<'m, P: PacketPool>(
 ) -> Result<(), Error> {
     let begin_face = server.face_service.begin_face;
     let display_face = server.face_service.display_face;
-    let expression = server.face_service.expression;
+    let begin_expression = server.face_service.begin_expression;
     let begin_frame = server.face_service.begin_frame;
     let frame_chunk = &server.face_service.frame_chunk;
 
@@ -208,7 +208,7 @@ async fn gatt_events_task<'m, P: PacketPool>(
                             }
 
                             // Mutex has been dropped, control has returned to the renderer
-                        } else if event.handle() == expression.handle {
+                        } else if event.handle() == begin_expression.handle {
                             let face = match mutex_guard.as_mut() {
                                 Some(value) => value,
                                 None => {
