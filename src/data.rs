@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 const DISPLAY_WIDTH: usize = 64;
 const DISPLAY_HEIGHT: usize = 32;
 const DISPLAYS: usize = 2;
@@ -7,10 +9,10 @@ const FRAME_WIDTH: usize = DISPLAY_WIDTH * DISPLAYS;
 const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 
 /// Maximum number of frames allowed for the whole "face"
-const MAX_FRAMES_PER_FACE: usize = 200;
+const MAX_FRAMES_PER_FACE: usize = 512;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 16;
+const MAX_UNCOMPRESSED_FRAMES: usize = 200;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
@@ -31,13 +33,12 @@ impl Expression {
     }
 }
 
-#[derive(Default)]
 pub struct Face {
     /// Pixel data for each face expression
-    pixels: heapless::Vec<RLEPixelData, PIXEL_DATA_CAPACITY, usize>,
+    pixels: Vec<RLEPixelData>,
 
     /// Frame data
-    frames: heapless::Vec<FaceFrame, MAX_FRAMES_PER_FACE, usize>,
+    frames: Vec<FaceFrame>,
 
     /// Current frame being written to
     current_frame: Option<usize>,
@@ -47,6 +48,18 @@ pub struct Face {
 
     /// Current expression begin written to
     current_expression: Option<usize>,
+}
+
+impl Default for Face {
+    fn default() -> Self {
+        Self {
+            pixels: Vec::with_capacity(PIXEL_DATA_CAPACITY),
+            frames: Vec::with_capacity(MAX_FRAMES_PER_FACE),
+            current_frame: Default::default(),
+            expressions: Default::default(),
+            current_expression: Default::default(),
+        }
+    }
 }
 
 pub enum BeginFrameError {
@@ -99,13 +112,15 @@ impl Face {
         let start_index = self.pixels.len();
         let index = self.frames.len();
 
-        self.frames
-            .push(FaceFrame {
-                index: start_index,
-                length: 0,
-                duration,
-            })
-            .map_err(|_| BeginFrameError::FrameLimit)?;
+        if index == self.frames.capacity() {
+            return Err(BeginFrameError::FrameLimit);
+        }
+
+        self.frames.push(FaceFrame {
+            index: start_index,
+            length: 0,
+            duration,
+        });
 
         let expression = self.expressions[expression_index]
             .as_mut()
@@ -129,9 +144,11 @@ impl Face {
         let frame = self.frames.get_mut(frame_index).expect("frame must exist");
 
         for pixel in pixels {
-            self.pixels
-                .push(pixel)
-                .map_err(|_| PushPixelError::PixelLimit)?;
+            if self.pixels.len() == self.pixels.capacity() {
+                return Err(PushPixelError::PixelLimit);
+            }
+
+            self.pixels.push(pixel);
 
             frame.length = frame
                 .length

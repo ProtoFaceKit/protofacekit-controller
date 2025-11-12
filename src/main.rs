@@ -75,7 +75,11 @@ async fn main(_spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    // Setup the heap allocator
     esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 73744);
+
+    // Add PSRAM to the heap.
+    esp_alloc::psram_allocator!(&peripherals.PSRAM, esp_hal::psram);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
