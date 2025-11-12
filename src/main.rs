@@ -5,6 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
+#![feature(try_with_capacity)]
 
 use crate::data::{Expression, Face, RLESlicePixelIterator};
 use crate::neopixel::{FRAME_BUFFER_SIZE, PIXEL_COUNT, create_neopixel_driver};
@@ -25,6 +26,7 @@ use trouble_host::prelude::*;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
+    defmt::error!("panic");
     loop {}
 }
 
@@ -133,6 +135,8 @@ async fn main(_spawner: Spawner) {
         .unwrap();
 
     let face: Mutex<CriticalSectionRawMutex, Face> = Mutex::new(Face::default());
+
+    defmt::info!("allocate face data");
 
     let _ = join3(ble_task(runner), render_task(&face), async {
         loop {
