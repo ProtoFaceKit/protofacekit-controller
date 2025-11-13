@@ -1,4 +1,8 @@
-use blinksy::{driver::ClocklessDriver, leds::Ws2812};
+use blinksy::{
+    color::{ColorCorrection, LinearSrgb},
+    driver::{ClocklessDriver, DriverAsync},
+    leds::Ws2812,
+};
 use blinksy_esp::{ClocklessRmt, ClocklessRmtBuilder, rmt::rmt_buffer_size};
 use esp_hal::{
     peripherals::{GPIO4, RMT},
@@ -6,9 +10,9 @@ use esp_hal::{
     time::Rate,
 };
 
-pub const PIXEL_COUNT: usize = 1;
-pub const FRAME_BUFFER_SIZE: usize = Ws2812::frame_buffer_size(PIXEL_COUNT);
-pub const RMT_BUFFER_SIZE: usize = rmt_buffer_size::<Ws2812>(PIXEL_COUNT);
+const PIXEL_COUNT: usize = 1;
+const FRAME_BUFFER_SIZE: usize = Ws2812::frame_buffer_size(PIXEL_COUNT);
+const RMT_BUFFER_SIZE: usize = rmt_buffer_size::<Ws2812>(PIXEL_COUNT);
 
 pub type NeoPixelDriver<'a> = ClocklessDriver<
     Ws2812,
@@ -39,4 +43,19 @@ pub fn create_neopixel_driver(
                 .with_pin(data_pin)
                 .build(),
         )
+}
+
+pub async fn show_neopixel_color(
+    driver: &mut NeoPixelDriver<'static>,
+    color: LinearSrgb,
+    brightness: f32,
+) {
+    driver
+        .show::<PIXEL_COUNT, FRAME_BUFFER_SIZE, core::iter::Once<LinearSrgb>, LinearSrgb>(
+            core::iter::once(color),
+            brightness,
+            ColorCorrection::default(),
+        )
+        .await
+        .unwrap();
 }

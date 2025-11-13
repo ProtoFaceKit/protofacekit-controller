@@ -7,6 +7,9 @@
     "uninit",
     "LinearSrgb",
     "Clockless",
-    "heapless"
+    "heapless",
+    "NROWS",
+    "PSRAM",
+    "Efuse"
   ]
 }

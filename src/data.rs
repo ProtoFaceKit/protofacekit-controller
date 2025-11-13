@@ -68,6 +68,7 @@ impl Default for Face {
     }
 }
 
+#[derive(defmt::Format)]
 pub enum BeginFrameError {
     /// No active expression
     NoExpression,
@@ -77,6 +78,7 @@ pub enum BeginFrameError {
     ExpressionFrameLimit,
 }
 
+#[derive(defmt::Format)]
 pub enum PushPixelError {
     /// No active frame
     NoFrame,
@@ -86,6 +88,7 @@ pub enum PushPixelError {
     FramePixelLimit,
 }
 
+#[derive(defmt::Format)]
 pub enum BeginExpressionError {
     ExpressionExists,
 }

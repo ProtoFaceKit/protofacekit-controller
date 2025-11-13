@@ -36,7 +36,7 @@ esp-radio = { version = "0.17.0", features = [
   "esp32s3",
   "unstable",
 ] }
-trouble-host = { version = "0.5.0", features = ["gatt", "derive"] }
+trouble-host = { version = "0.5.0", features = ["gatt", "derive", "defmt"] }
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
