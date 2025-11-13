@@ -6,7 +6,8 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use crate::data::{Expression, Face, RLESlicePixelIterator};
+use crate::data::{Expression, Face, RLEPixelProducerIterator, RLESlicePixelIterator};
+use crate::hub75::{Hub75, Hub75Pins};
 use crate::neopixel::{FRAME_BUFFER_SIZE, PIXEL_COUNT, create_neopixel_driver};
 use blinksy::color::{ColorCorrection, LinearSrgb};
 use blinksy::driver::DriverAsync;
@@ -15,9 +16,12 @@ use core::iter::{self, Once};
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::join3;
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::{Mutex, MutexGuard};
+use embassy_time::{Duration, Timer};
 use esp_hal::clock::CpuClock;
+use esp_hal::gpio::{Output, OutputConfig};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 use esp_radio::ble::controller::BleConnector;
@@ -31,6 +35,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 extern crate alloc;
 
 mod data;
+mod hub75;
 mod neopixel;
 
 const CONNECTIONS_MAX: usize = 1;
@@ -74,6 +79,79 @@ struct ProtoFaceService {
 async fn main(_spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+
+    let hub_pins = Hub75Pins {
+        r1: Output::new(
+            peripherals.GPIO42,
+            esp_hal::gpio::Level::High,
+            OutputConfig::default(),
+        ),
+        g1: Output::new(
+            peripherals.GPIO41,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        b1: Output::new(
+            peripherals.GPIO40,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        r2: Output::new(
+            peripherals.GPIO38,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        g2: Output::new(
+            peripherals.GPIO39,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        b2: Output::new(
+            peripherals.GPIO37,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        addr_a: Output::new(
+            peripherals.GPIO45,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        addr_b: Output::new(
+            peripherals.GPIO36,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        addr_c: Output::new(
+            peripherals.GPIO48,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        addr_d: Output::new(
+            peripherals.GPIO35,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        addr_e: Output::new(
+            peripherals.GPIO21,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        clk: Output::new(
+            peripherals.GPIO2,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        oe: Output::new(
+            peripherals.GPIO14,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+        lat: Output::new(
+            peripherals.GPIO47,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default(),
+        ),
+    };
 
     // Setup the heap allocator
     esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 73744);
@@ -133,8 +211,9 @@ async fn main(_spawner: Spawner) {
         .unwrap();
 
     let face: Mutex<CriticalSectionRawMutex, Face> = Mutex::new(Face::default());
+    let mut hub75 = Hub75::new(hub_pins, 3);
 
-    let _ = join3(ble_task(runner), render_task(&face), async {
+    let _ = join3(ble_task(runner), render_task(&face, &mut hub75), async {
         loop {
             match advertise("ProtoFaceKit", &mut peripheral, &server).await {
                 Ok(conn) => {
@@ -153,7 +232,58 @@ async fn main(_spawner: Spawner) {
 }
 
 /// Task to render the face
-async fn render_task<'m>(face: &'m Mutex<CriticalSectionRawMutex, Face>) {
+async fn render_task<'m>(
+    face: &'m Mutex<CriticalSectionRawMutex, Face>,
+    hub75: &mut Hub75<'static>,
+) {
+    let mut expression = Expression::IDLE;
+    let mut frame_index = 0;
+
+    loop {
+        let face = &mut *face.lock().await;
+        let frames = match face.get_expression_frames(expression) {
+            Some(value) => value,
+            // Nothing to render
+            None => {
+                Timer::after(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+
+        // No frames to render
+        if frames.is_empty() {
+            Timer::after(Duration::from_millis(100)).await;
+            continue;
+        }
+
+        if frame_index >= frames.len() {
+            frame_index = 0;
+        }
+
+        let frame = &frames[frame_index];
+        let pixels = match face.get_frame_pixels(frame) {
+            Some(value) => value,
+            None => {
+                // Nothing to render
+                Timer::after(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+
+        let iterator = RLEPixelProducerIterator::new(pixels);
+        hub75.paint(iterator);
+
+        // Output to the hub75
+        select(Timer::after_millis(frame.duration as u64), async {
+            loop {
+                hub75.output().await;
+            }
+        })
+        .await;
+
+        frame_index += 1;
+    }
+
     // TODO: Render face to hub75
 }
 
@@ -299,6 +429,7 @@ async fn advertise<'values, 'server, C: Controller>(
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
             AdStructure::CompleteLocalName(name.as_bytes()),
         ],
         &mut advertiser_data[..],

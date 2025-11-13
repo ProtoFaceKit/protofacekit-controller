@@ -1,18 +1,18 @@
 use alloc::vec::Vec;
 
-const DISPLAY_WIDTH: usize = 64;
-const DISPLAY_HEIGHT: usize = 32;
-const DISPLAYS: usize = 2;
+pub const DISPLAY_WIDTH: usize = 64;
+pub const DISPLAY_HEIGHT: usize = 32;
+pub const DISPLAYS: usize = 2;
 
 /// Frame width is increased because frames are stacked horizontally
-const FRAME_WIDTH: usize = DISPLAY_WIDTH * DISPLAYS;
-const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
+pub const FRAME_WIDTH: usize = DISPLAY_WIDTH * DISPLAYS;
+pub const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 
 /// Maximum number of frames allowed for the whole "face"
 const MAX_FRAMES_PER_FACE: usize = 512;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 200;
+const MAX_UNCOMPRESSED_FRAMES: usize = 10;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
@@ -85,6 +85,20 @@ pub enum BeginExpressionError {
 }
 
 impl Face {
+    /// Get all the frames for an expression
+    pub fn get_expression_frames(&self, expression: Expression) -> Option<&[FaceFrame]> {
+        let expression_index = expression.0 as usize;
+        let expression = self.expressions[expression_index].as_ref()?;
+
+        self.frames
+            .get(expression.index..(expression.index + expression.length as usize))
+    }
+
+    /// Get all pixels for a frame
+    pub fn get_frame_pixels(&self, frame: &FaceFrame) -> Option<&[RLEPixelData]> {
+        self.pixels.get(frame.index..(frame.length as usize))
+    }
+
     /// Begin writing an expression
     pub fn begin_expression(&mut self, expression: Expression) -> Result<(), BeginExpressionError> {
         let expression_index = expression.0 as usize;
@@ -228,5 +242,46 @@ impl<'a> Iterator for RLESlicePixelIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         RLEPixelData::from_iterator(&mut self.bytes)
+    }
+}
+
+/// RGB pixel data producer from RLE data
+pub struct RLEPixelProducerIterator<'a> {
+    // Current pixel data entry and number of produced values
+    current: Option<(&'a RLEPixelData, u8)>,
+
+    /// Iterator for next pixel data
+    iterator: core::slice::Iter<'a, RLEPixelData>,
+}
+
+impl<'a> RLEPixelProducerIterator<'a> {
+    pub fn new(pixel_data: &'a [RLEPixelData]) -> Self {
+        Self {
+            current: None,
+            iterator: pixel_data.iter(),
+        }
+    }
+}
+
+impl<'a> Iterator for RLEPixelProducerIterator<'a> {
+    type Item = (u8, u8, u8);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut pixel_data = match self.current.as_mut() {
+            Some(value) => value,
+            None => {
+                let value = self.iterator.next()?;
+                self.current.insert((value, 0))
+            }
+        };
+
+        // We have used this RLE data to its full length
+        if pixel_data.1 == pixel_data.0.length {
+            let value = self.iterator.next()?;
+            pixel_data = self.current.insert((value, 0));
+        }
+
+        let rgb = pixel_data.0;
+        Some((rgb.r, rgb.g, rgb.b))
     }
 }
