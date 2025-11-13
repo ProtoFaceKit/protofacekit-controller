@@ -5,6 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
+#![feature(try_with_capacity)]
 
 use crate::data::{Expression, Face, RLEPixelProducerIterator, RLESlicePixelIterator};
 use crate::hub75::{Hub75, Hub75Pins};
@@ -29,6 +30,7 @@ use trouble_host::prelude::*;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
+    defmt::error!("panic");
     loop {}
 }
 

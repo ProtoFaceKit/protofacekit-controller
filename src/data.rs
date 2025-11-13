@@ -9,10 +9,10 @@ pub const FRAME_WIDTH: usize = DISPLAY_WIDTH * DISPLAYS;
 pub const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 
 /// Maximum number of frames allowed for the whole "face"
-const MAX_FRAMES_PER_FACE: usize = 512;
+const MAX_FRAMES_PER_FACE: usize = 4096;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 10;
+const MAX_UNCOMPRESSED_FRAMES: usize = 128;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
@@ -52,8 +52,14 @@ pub struct Face {
 
 impl Default for Face {
     fn default() -> Self {
+        let pixels = Vec::try_with_capacity(PIXEL_DATA_CAPACITY).unwrap();
+        defmt::info!(
+            "allocated {} bytes capacity for pixel data",
+            pixels.capacity() * core::mem::size_of::<RLEPixelData>()
+        );
+
         Self {
-            pixels: Vec::with_capacity(PIXEL_DATA_CAPACITY),
+            pixels,
             frames: Vec::with_capacity(MAX_FRAMES_PER_FACE),
             current_frame: Default::default(),
             expressions: Default::default(),
@@ -206,6 +212,7 @@ pub struct FaceExpression {
 }
 
 /// Represents a run-length encoded pixel data
+#[derive(Copy, Clone, Default)]
 pub struct RLEPixelData {
     /// Run of the pixel data
     pub length: u8,
