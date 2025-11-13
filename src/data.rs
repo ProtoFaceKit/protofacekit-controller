@@ -12,7 +12,7 @@ pub const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 const MAX_FRAMES_PER_FACE: usize = 4096;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 128;
+const MAX_UNCOMPRESSED_FRAMES: usize = 5;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
@@ -52,7 +52,7 @@ pub struct Face {
 
 impl Default for Face {
     fn default() -> Self {
-        let pixels = Vec::try_with_capacity(PIXEL_DATA_CAPACITY).unwrap();
+        let pixels = Vec::with_capacity(PIXEL_DATA_CAPACITY);
         defmt::info!(
             "allocated {} bytes capacity for pixel data",
             pixels.capacity() * core::mem::size_of::<RLEPixelData>()
@@ -102,7 +102,8 @@ impl Face {
 
     /// Get all pixels for a frame
     pub fn get_frame_pixels(&self, frame: &FaceFrame) -> Option<&[RLEPixelData]> {
-        self.pixels.get(frame.index..(frame.length as usize))
+        self.pixels
+            .get(frame.index..(frame.index + frame.length as usize))
     }
 
     /// Begin writing an expression
@@ -274,21 +275,18 @@ impl<'a> Iterator for RLEPixelProducerIterator<'a> {
     type Item = (u8, u8, u8);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut pixel_data = match self.current.as_mut() {
-            Some(value) => value,
-            None => {
+        let pixel_data = match self.current.as_mut() {
+            Some(value) if value.1 < value.0.length => value,
+
+            // No value yet OR completely used the existing RLE data
+            _ => {
                 let value = self.iterator.next()?;
                 self.current.insert((value, 0))
             }
         };
 
-        // We have used this RLE data to its full length
-        if pixel_data.1 == pixel_data.0.length {
-            let value = self.iterator.next()?;
-            pixel_data = self.current.insert((value, 0));
-        }
-
         let rgb = pixel_data.0;
+        pixel_data.1 += 1;
         Some((rgb.r, rgb.g, rgb.b))
     }
 }
