@@ -14,7 +14,7 @@ use blinksy::color::{ColorCorrection, LinearSrgb};
 use blinksy::driver::DriverAsync;
 use bt_hci::controller::ExternalController;
 use core::iter::{self, Once};
-use defmt::info;
+use defmt::{Debug2Format, info};
 use embassy_executor::{Spawner, task};
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -279,7 +279,7 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    const DISPLAY_STACK_SIZE: usize = 2048;
+    const DISPLAY_STACK_SIZE: usize = 4096;
     let app_core_stack = mk_static!(Stack<DISPLAY_STACK_SIZE>, Stack::new());
 
     esp_rtos::start_second_core(
@@ -352,7 +352,6 @@ async fn matrix_driver(
             let new_fb = rx.wait().await;
             tx.signal(fb);
             fb = new_fb;
-            defmt::info!("swapped frame buffer");
         }
         let mut xfer = hub75
             .render(fb)
@@ -419,19 +418,17 @@ async fn render_task(
         for (index, (r, g, b)) in iterator.enumerate() {
             let row = index / FRAME_WIDTH;
             let column = index % FRAME_WIDTH;
+
             fb.set_pixel(Point::new(column as i32, row as i32), Color::new(r, g, b));
         }
 
         tx.signal(fb);
 
-        defmt::info!("sent pixel data");
-
         fb = rx.wait().await;
 
+        let duration = frame.duration as u64;
         drop(face);
-
-        // Timer::after_millis(frame.duration as u64).await
-        Timer::after_secs(60).await;
+        Timer::after_millis(duration).await;
 
         frame_index += 1;
         Timer::after(Duration::from_millis(100)).await;
@@ -492,7 +489,10 @@ async fn gatt_events_task<'m, P: PacketPool>(
 
                             face.reset();
                         } else if event.handle() == display_face.handle {
-                            if mutex_guard.take().is_none() {
+                            if let Some(face) = mutex_guard.take() {
+                                let pixels_fmt = Debug2Format(&face.pixels);
+                                defmt::info!("data at {}", pixels_fmt);
+                            } else {
                                 todo!("err mutex guard was never held")
                             }
 
@@ -511,7 +511,7 @@ async fn gatt_events_task<'m, P: PacketPool>(
                             let expression =
                                 Expression::from_value(value).expect("invalid expression value");
 
-                            defmt::info!("beginning expression");
+                            defmt::info!("beginning expression {}", expression);
 
                             if let Err(_error) = face.begin_expression(expression) {
                                 todo!("handle begin expression error");
@@ -528,7 +528,7 @@ async fn gatt_events_task<'m, P: PacketPool>(
                             let duration =
                                 *data.first().expect("begin frame must provided the value");
 
-                            defmt::info!("beginning frame");
+                            defmt::info!("beginning frame {}", duration);
 
                             if let Err(_error) = face.begin_frame(duration) {
                                 todo!("handle begin frame error");

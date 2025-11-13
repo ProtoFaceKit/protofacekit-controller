@@ -17,7 +17,7 @@ const MAX_UNCOMPRESSED_FRAMES: usize = 5;
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
 
-#[derive(Clone, Copy)]
+#[derive(defmt::Format, Clone, Copy)]
 pub struct Expression(u8);
 
 impl Expression {
@@ -35,7 +35,7 @@ impl Expression {
 
 pub struct Face {
     /// Pixel data for each face expression
-    pixels: Vec<RLEPixelData>,
+    pub pixels: Vec<RLEPixelData>,
 
     /// Frame data
     frames: Vec<FaceFrame>,
@@ -213,7 +213,7 @@ pub struct FaceExpression {
 }
 
 /// Represents a run-length encoded pixel data
-#[derive(Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct RLEPixelData {
     /// Run of the pixel data
     pub length: u8,
