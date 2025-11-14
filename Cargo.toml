@@ -36,7 +36,7 @@ esp-radio = { version = "0.17.0", features = [
   "esp32s3",
   "unstable",
 ] }
-trouble-host = { version = "0.5.0", features = ["gatt", "derive", "defmt"] }
+trouble-host = { version = "0.5.0", features = ["gatt", "derive", "defmt", "security"] }
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
@@ -51,7 +51,10 @@ heapless = "0.9.1"
 esp-hub75 = { version = "0.8.0", features = ["defmt", "esp32s3"] }
 embedded-graphics = "0.8.1"
 nb = "1.1.0"
-
+sequential-storage = "6.0.1"
+embedded-storage-async = "0.4.1"
+embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
+esp-storage = { version = "0.8.1", features = ["esp32s3", "defmt"] }
 
 
 [profile.dev]

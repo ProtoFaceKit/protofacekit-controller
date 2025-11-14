@@ -11,6 +11,7 @@
     "NROWS",
     "PSRAM",
     "Efuse",
-    "oneshot"
+    "oneshot",
+    "Trng"
   ]
 }

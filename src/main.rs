@@ -22,8 +22,10 @@ use embassy_sync::signal::Signal;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::Efuse;
 use esp_hal::gpio::Pin;
+use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
+use esp_storage::FlashStorage;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -72,6 +74,10 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0);
 
     defmt::info!("runtime initialized");
+
+    // Initialize randomness source
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    let trng = Trng::try_new().unwrap();
 
     let mut driver = create_neopixel_driver(peripherals.GPIO4, peripherals.RMT);
     show_neopixel_color(&mut driver, LinearSrgb::new(1.0, 0.0, 0.0), 0.01).await;
@@ -124,6 +130,11 @@ async fn main(spawner: Spawner) {
     // Green light for startup complete
     show_neopixel_color(&mut driver, LinearSrgb::new(0.0, 1.0, 0.0), 0.01).await;
 
+    // Get flash storage for BLE bonding
+    let flash = embassy_embedded_hal::adapter::BlockingAsync::new(
+        FlashStorage::new(peripherals.FLASH).multicore_auto_park(),
+    );
+
     // Run the bluetooth GATT service
-    ble_server(radio_init, peripherals.BT, face_controller).await;
+    ble_server(radio_init, peripherals.BT, trng, face_controller, flash).await;
 }
