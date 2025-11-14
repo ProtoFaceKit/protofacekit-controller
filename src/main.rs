@@ -86,9 +86,7 @@ async fn main(spawner: Spawner) {
     let face_consumer = FaceConsumer::new(face, expression_signal);
     let face_controller = FaceController::new(face);
 
-    // TODO: Spawn task to listen to microphone and provide expressions
-    face_expression_controller.signal(Expression::IDLE);
-
+    // Run microphone listener
     spawner
         .spawn(microphone_expression_task(
             peripherals.GPIO11,
