@@ -10,6 +10,7 @@
     "heapless",
     "NROWS",
     "PSRAM",
-    "Efuse"
+    "Efuse",
+    "oneshot"
   ]
 }

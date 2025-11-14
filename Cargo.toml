@@ -50,6 +50,7 @@ blinksy-esp = { version = "0.11.0", features = ["esp32s3", "async", "defmt"] }
 heapless = "0.9.1"
 esp-hub75 = { version = "0.8.0", features = ["defmt", "esp32s3"] }
 embedded-graphics = "0.8.1"
+nb = "1.1.0"
 
 
 

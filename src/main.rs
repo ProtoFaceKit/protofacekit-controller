@@ -6,11 +6,13 @@
     holding buffers for the duration of a data transfer."
 )]
 #![feature(try_with_capacity)]
+#![feature(core_float_math)]
 
 use crate::bluetooth::ble_server;
 use crate::data::{Expression, Face};
 use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController};
 use crate::hub75::{Hub75Peripherals, setup_hub75_dedicated_core};
+use crate::microphone::microphone_expression_task;
 use crate::neopixel::{create_neopixel_driver, show_neopixel_color};
 use blinksy::color::LinearSrgb;
 use embassy_executor::Spawner;
@@ -38,6 +40,7 @@ mod data;
 mod face_control;
 mod hub75;
 mod macros;
+mod microphone;
 mod neopixel;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -54,7 +57,7 @@ fn device_serial_number() -> [u8; 16] {
 }
 
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
 
     let peripherals = esp_hal::init(config);
@@ -85,6 +88,14 @@ async fn main(_spawner: Spawner) {
 
     // TODO: Spawn task to listen to microphone and provide expressions
     face_expression_controller.signal(Expression::IDLE);
+
+    spawner
+        .spawn(microphone_expression_task(
+            peripherals.GPIO11,
+            peripherals.ADC2,
+            face_expression_controller,
+        ))
+        .expect("failed to spawn microphone task");
 
     // Run the Hub75
     let hub75_peripherals = Hub75Peripherals {
