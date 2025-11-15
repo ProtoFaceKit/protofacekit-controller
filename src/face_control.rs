@@ -5,28 +5,43 @@ use crate::{
     },
     hub75::FaceMatrixDriver,
 };
+use alloc::string::String;
 use embassy_executor::task;
+use embassy_futures::select::{Either, select};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::{Mutex, MutexGuard},
     signal::Signal,
 };
 use embassy_time::{Duration, Timer};
+use embedded_graphics::{mono_font::MonoTextStyle, prelude::Point, text::Alignment};
+use esp_hub75::Color;
 
 /// Consumer of face data
 pub struct FaceConsumer {
     pub face: &'static Mutex<CriticalSectionRawMutex, Face>,
     pub expression_signal: &'static Signal<CriticalSectionRawMutex, Expression>,
+    pub text_signal: &'static Signal<CriticalSectionRawMutex, Option<TextDisplay>>,
+}
+
+pub struct TextDisplay {
+    pub text: String,
+    pub position: Point,
+    pub character_style: MonoTextStyle<'static, Color>,
+    pub alignment: Alignment,
+    pub duration: u64,
 }
 
 impl FaceConsumer {
     pub fn new(
         face: &'static Mutex<CriticalSectionRawMutex, Face>,
         expression_signal: &'static Signal<CriticalSectionRawMutex, Expression>,
+        text_signal: &'static Signal<CriticalSectionRawMutex, Option<TextDisplay>>,
     ) -> Self {
         Self {
             face,
             expression_signal,
+            text_signal,
         }
     }
 }
@@ -51,6 +66,7 @@ impl FaceExpressionController {
 pub struct FaceController {
     face: &'static Mutex<CriticalSectionRawMutex, Face>,
     mutex_guard: Option<MutexGuard<'static, CriticalSectionRawMutex, Face>>,
+    text_signal: &'static Signal<CriticalSectionRawMutex, Option<TextDisplay>>,
 }
 
 impl Clone for FaceController {
@@ -58,15 +74,20 @@ impl Clone for FaceController {
         Self {
             face: self.face,
             mutex_guard: None,
+            text_signal: self.text_signal,
         }
     }
 }
 
 impl FaceController {
-    pub fn new(face: &'static Mutex<CriticalSectionRawMutex, Face>) -> Self {
+    pub fn new(
+        face: &'static Mutex<CriticalSectionRawMutex, Face>,
+        text_signal: &'static Signal<CriticalSectionRawMutex, Option<TextDisplay>>,
+    ) -> Self {
         Self {
             face,
             mutex_guard: None,
+            text_signal,
         }
     }
 }
@@ -80,6 +101,16 @@ pub enum FaceControllerError {
 }
 
 impl FaceController {
+    /// Send some text to be displayed
+    pub fn write_text(&mut self, display: TextDisplay) {
+        self.text_signal.signal(Some(display));
+    }
+
+    /// Clear the active text returning to displaying faces
+    pub fn clear_text(&mut self) {
+        self.text_signal.signal(None);
+    }
+
     pub async fn begin_face(&mut self) {
         let face = match self.mutex_guard.as_mut() {
             Some(value) => value,
@@ -149,6 +180,7 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
     let FaceConsumer {
         face,
         expression_signal,
+        text_signal,
     } = face;
 
     loop {
@@ -159,6 +191,28 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
         if expression_signal.signaled() {
             let next_expression = expression_signal.wait().await;
             expression = next_expression;
+        }
+
+        if text_signal.signaled() {
+            let mut signal: Option<TextDisplay> = text_signal.wait().await;
+            while let Some(text) = signal.take() {
+                driver.write_text(&text);
+                driver = driver.swap().await;
+
+                match select(
+                    Timer::after(Duration::from_millis(text.duration)),
+                    text_signal.wait(),
+                )
+                .await
+                {
+                    Either::First(_) => break,
+                    Either::Second(next_signal) => signal = next_signal,
+                }
+            }
+
+            // Erase the frame buffer before continuing
+            driver.erase();
+            driver = driver.swap().await;
         }
 
         let face = face.lock().await;

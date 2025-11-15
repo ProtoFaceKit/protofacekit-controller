@@ -4,11 +4,19 @@
 
 use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::Expression;
-use crate::face_control::FaceController;
+use crate::face_control::{FaceController, TextDisplay};
+use alloc::string::ToString;
 use embassy_futures::join::join;
+use embassy_futures::select::{Either, select};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::iso_8859_9::FONT_9X15_BOLD;
+use embedded_graphics::prelude::Point;
+use embedded_graphics::text::Alignment;
 use esp_hal::efuse::Efuse;
+use esp_hal::gpio::Input;
 use esp_hal::peripherals::BT;
 use esp_hal::rng::Trng;
+use esp_hub75::Color;
 use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::*;
 
@@ -51,9 +59,15 @@ struct ProtoFaceService {
 pub async fn ble_server(
     radio_init: esp_radio::Controller<'_>,
     device: BT<'static>,
+    //
     mut rand: Trng,
+    //
     face: FaceController,
+    //
     mut storage: FlashBluetoothStorage,
+    //
+    mut up_button: Input<'static>,
+    mut down_button: Input<'static>,
 ) {
     let transport = BleConnector::new(&radio_init, device, Default::default()).unwrap();
     let ble_controller = ExternalController::<_, 20>::new(transport);
@@ -107,8 +121,15 @@ pub async fn ble_server(
                 }
             };
 
-            if let Err(err) =
-                gatt_events_task(&mut storage, &server, connection, face.clone()).await
+            if let Err(err) = gatt_events_task(
+                &mut storage,
+                &server,
+                connection,
+                face.clone(),
+                &mut up_button,
+                &mut down_button,
+            )
+            .await
             {
                 defmt::error!("[gatt] error handling connection: {}", err);
             }
@@ -132,7 +153,11 @@ pub async fn gatt_events_task(
     storage: &mut FlashBluetoothStorage,
     server: &Server<'_>,
     conn: GattConnection<'_, '_, PacketPool>,
+    //
     mut face: FaceController,
+    //
+    up_button: &mut Input<'static>,
+    down_button: &mut Input<'static>,
 ) -> Result<(), Error> {
     let begin_face = server.face_service.begin_face;
     let display_face = server.face_service.display_face;
@@ -159,22 +184,34 @@ pub async fn gatt_events_task(
                     "Press the yes or no button to confirm pairing with key = {}",
                     key
                 );
-                // match select(yes.wait_for_low(), no.wait_for_low()).await {
-                //     Either::First(_) => {
-                //         info!("[gatt] confirming pairing");
-                //         conn.pass_key_confirm()?
-                //     }
-                //     Either::Second(_) => {
-                //         info!("[gatt] denying pairing");
-                //         conn.pass_key_cancel()?
-                //     }
-                // }
-                conn.pass_key_confirm()?
+
+                // Display the key on the face
+                let key = key.value().to_string();
+                face.write_text(TextDisplay {
+                    text: key,
+                    position: Point::new(5, 20),
+                    character_style: MonoTextStyle::new(&FONT_9X15_BOLD, Color::new(0, 0, 255)),
+                    alignment: Alignment::Left,
+                    duration: 1000 * 60,
+                });
+
+                match select(up_button.wait_for_low(), down_button.wait_for_low()).await {
+                    Either::First(_) => {
+                        defmt::info!("[gatt] confirming pairing");
+                        conn.pass_key_confirm()?
+                    }
+                    Either::Second(_) => {
+                        defmt::info!("[gatt] denying pairing");
+                        conn.pass_key_cancel()?
+                    }
+                }
             }
             GattConnectionEvent::PairingComplete {
                 security_level,
                 bond,
             } => {
+                face.clear_text();
+
                 defmt::info!("[gatt] pairing complete: {:?}", security_level);
                 if let Some(bond) = bond {
                     if let Err(err) = storage.write(&bond).await {

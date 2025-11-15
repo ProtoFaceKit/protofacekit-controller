@@ -1,10 +1,11 @@
 use crate::data::{DISPLAY_HEIGHT, DISPLAY_WIDTH, DISPLAYS, FRAME_WIDTH, RLEPixelProducerIterator};
-use crate::face_control::{FaceConsumer, face_render_task};
+use crate::face_control::{FaceConsumer, TextDisplay, face_render_task};
 use crate::mk_static;
 use embassy_executor::task;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embedded_graphics::prelude::Point;
+use embedded_graphics::text::Text;
 use esp_hal::gpio::AnyPin;
 use esp_hal::interrupt::Priority;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -149,6 +150,26 @@ impl FaceMatrixDriver {
             let point = Point::new(column as i32, row as i32);
             self.fb.set_pixel(point, Color::new(r, g, b));
         }
+    }
+
+    /// Erase the frame buffer
+    pub fn erase(&mut self) {
+        self.fb.erase();
+    }
+
+    /// Write text to the frame buffer
+    pub fn write_text(&mut self, text: &TextDisplay) {
+        use embedded_graphics::Drawable;
+        self.fb.erase();
+
+        // Draw centered text.
+        _ = Text::with_alignment(
+            &text.text,
+            text.position,
+            text.character_style,
+            text.alignment,
+        )
+        .draw(self.fb);
     }
 
     /// Exchange the current frame buffer with the matrix driver to be

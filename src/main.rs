@@ -11,7 +11,7 @@
 use crate::bluetooth::gatt::ble_server;
 use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::{Expression, Face};
-use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController};
+use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController, TextDisplay};
 use crate::hub75::{Hub75Peripherals, setup_hub75_dedicated_core};
 use crate::microphone::microphone_expression_task;
 use crate::neopixel::{create_neopixel_driver, show_neopixel_color};
@@ -69,7 +69,7 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO6,
         InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
     );
-    let _down_button = Input::new(
+    let down_button = Input::new(
         peripherals.GPIO7,
         InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
     );
@@ -100,10 +100,14 @@ async fn main(spawner: Spawner) {
     let face = &*mk_static!(Mutex<CriticalSectionRawMutex, Face>, Mutex::new(Face::default()));
     let expression_signal =
         mk_static!(Signal::<CriticalSectionRawMutex, Expression>, Signal::new());
+    let text_signal = mk_static!(
+        Signal::<CriticalSectionRawMutex, Option<TextDisplay>>,
+        Signal::new()
+    );
 
     let face_expression_controller = FaceExpressionController::new(expression_signal);
-    let face_consumer = FaceConsumer::new(face, expression_signal);
-    let face_controller = FaceController::new(face);
+    let face_consumer = FaceConsumer::new(face, expression_signal, text_signal);
+    let face_controller = FaceController::new(face, text_signal);
 
     // Run microphone listener
     spawner
@@ -159,5 +163,14 @@ async fn main(spawner: Spawner) {
     }
 
     // Run the bluetooth GATT service
-    ble_server(radio_init, peripherals.BT, trng, face_controller, storage).await;
+    ble_server(
+        radio_init,
+        peripherals.BT,
+        trng,
+        face_controller,
+        storage,
+        up_button,
+        down_button,
+    )
+    .await;
 }
