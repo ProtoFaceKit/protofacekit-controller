@@ -12,6 +12,7 @@
     "PSRAM",
     "Efuse",
     "oneshot",
-    "Trng"
+    "Trng",
+    "multicore"
   ]
 }

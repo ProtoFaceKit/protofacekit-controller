@@ -1,15 +1,15 @@
-use core::ops::Range;
+//! # Bluetooth GATT
+//!
+//! GATT server implementation and logic
 
+use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::Expression;
 use crate::face_control::FaceController;
 use embassy_futures::join::join;
-use embedded_storage_async::nor_flash::NorFlash;
 use esp_hal::efuse::Efuse;
 use esp_hal::peripherals::BT;
 use esp_hal::rng::Trng;
 use esp_radio::ble::controller::BleConnector;
-use sequential_storage::cache::NoCache;
-use sequential_storage::map::{Key, SerializationError, Value};
 use trouble_host::prelude::*;
 
 const CONNECTIONS_MAX: usize = 1;
@@ -47,136 +47,13 @@ struct ProtoFaceService {
     frame_chunk: heapless::Vec<u8, 248>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StoredAddr(BdAddr);
-
-impl Key for StoredAddr {
-    fn serialize_into(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
-        if buffer.len() < 6 {
-            return Err(SerializationError::BufferTooSmall);
-        }
-        buffer[0..6].copy_from_slice(self.0.raw());
-        Ok(6)
-    }
-
-    fn deserialize_from(buffer: &[u8]) -> Result<(Self, usize), SerializationError> {
-        if buffer.len() < 6 {
-            Err(SerializationError::BufferTooSmall)
-        } else {
-            Ok((StoredAddr(BdAddr::new(buffer[0..6].try_into().unwrap())), 6))
-        }
-    }
-}
-
-struct StoredBondInformation {
-    ltk: LongTermKey,
-    security_level: SecurityLevel,
-}
-
-impl<'a> Value<'a> for StoredBondInformation {
-    fn serialize_into(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
-        if buffer.len() < 17 {
-            return Err(SerializationError::BufferTooSmall);
-        }
-        buffer[0..16].copy_from_slice(self.ltk.to_le_bytes().as_slice());
-        buffer[16] = match self.security_level {
-            SecurityLevel::NoEncryption => 0,
-            SecurityLevel::Encrypted => 1,
-            SecurityLevel::EncryptedAuthenticated => 2,
-        };
-        Ok(17)
-    }
-
-    fn deserialize_from(buffer: &'a [u8]) -> Result<(Self, usize), SerializationError>
-    where
-        Self: Sized,
-    {
-        if buffer.len() < 17 {
-            return Err(SerializationError::BufferTooSmall);
-        }
-
-        let ltk = LongTermKey::from_le_bytes(buffer[0..16].try_into().unwrap());
-        let security_level = match buffer[16] {
-            0 => SecurityLevel::NoEncryption,
-            1 => SecurityLevel::Encrypted,
-            2 => SecurityLevel::EncryptedAuthenticated,
-            _ => return Err(SerializationError::InvalidData),
-        };
-        Ok((
-            StoredBondInformation {
-                ltk,
-                security_level,
-            },
-            17,
-        ))
-    }
-}
-
-fn flash_range<S: NorFlash>() -> Range<u32> {
-    let start_addr = 0x7D0000;
-    let data_size = 2 * S::ERASE_SIZE as u32;
-
-    start_addr..(start_addr + data_size)
-}
-
-async fn store_bonding_info<S: NorFlash>(
-    storage: &mut S,
-    info: &BondInformation,
-) -> Result<(), sequential_storage::Error<S::Error>> {
-    let storage_range = flash_range::<S>();
-    sequential_storage::erase_all(storage, storage_range.clone()).await?;
-    let mut buffer = [0; 32];
-    let key = StoredAddr(info.identity.bd_addr);
-    let value = StoredBondInformation {
-        ltk: info.ltk,
-        security_level: info.security_level,
-    };
-    sequential_storage::map::store_item(
-        storage,
-        storage_range,
-        &mut NoCache::new(),
-        &mut buffer,
-        &key,
-        &value,
-    )
-    .await?;
-    Ok(())
-}
-
-async fn load_bonding_info<S: NorFlash>(storage: &mut S) -> Option<BondInformation> {
-    let mut buffer = [0; 32];
-    let mut cache = NoCache::new();
-    let mut iter = sequential_storage::map::fetch_all_items::<StoredAddr, _, _>(
-        storage,
-        flash_range::<S>(),
-        &mut cache,
-        &mut buffer,
-    )
-    .await
-    .ok()?;
-
-    iter.next::<StoredBondInformation>(&mut buffer)
-        .await
-        .ok()
-        .and_then(|value| value)
-        .map(|(key, value)| BondInformation {
-            identity: Identity {
-                bd_addr: key.0,
-                irk: None,
-            },
-            security_level: value.security_level,
-            is_bonded: true,
-            ltk: value.ltk,
-        })
-}
-
 /// Execute a BLE GATT server
-pub async fn ble_server<S: NorFlash>(
+pub async fn ble_server(
     radio_init: esp_radio::Controller<'_>,
     device: BT<'static>,
     mut rand: Trng,
     face: FaceController,
-    mut storage: S,
+    mut storage: FlashBluetoothStorage,
 ) {
     let transport = BleConnector::new(&radio_init, device, Default::default()).unwrap();
     let ble_controller = ExternalController::<_, 20>::new(transport);
@@ -191,8 +68,8 @@ pub async fn ble_server<S: NorFlash>(
         .set_random_generator_seed(&mut rand)
         .set_io_capabilities(IoCapabilities::DisplayYesNo);
 
-    if let Some(bond_info) = load_bonding_info(&mut storage).await {
-        defmt::info!("[ble] loaded bond information");
+    if let Some(bond_info) = storage.read().await {
+        defmt::info!("[ble] loaded bond information {}", bond_info);
         stack.add_bond_information(bond_info).unwrap();
         true
     } else {
@@ -251,8 +128,8 @@ pub async fn ble_task<C: Controller>(mut runner: Runner<'_, C, PacketPool>) {
 }
 
 /// Handle GATT events for a connection
-pub async fn gatt_events_task<S: NorFlash>(
-    storage: &mut S,
+pub async fn gatt_events_task(
+    storage: &mut FlashBluetoothStorage,
     server: &Server<'_>,
     conn: GattConnection<'_, '_, PacketPool>,
     mut face: FaceController,
@@ -300,10 +177,10 @@ pub async fn gatt_events_task<S: NorFlash>(
             } => {
                 defmt::info!("[gatt] pairing complete: {:?}", security_level);
                 if let Some(bond) = bond {
-                    if let Err(err) = store_bonding_info(storage, &bond).await {
-                        let err = defmt::Debug2Format(&err);
+                    if let Err(err) = storage.write(&bond).await {
                         defmt::panic!("failed to store bonding info {}", err);
                     }
+
                     defmt::info!("Bond information stored");
                 }
                 defmt::info!("[gatt] pair complete finished")
@@ -435,6 +312,7 @@ pub async fn advertise<'values, 'server, C: Controller>(
     defmt::info!("[adv] advertising");
 
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
-    defmt::info!("[adv] connection established");
+    let addr = conn.raw().peer_address();
+    defmt::info!("[adv] connection established addr = {}", addr);
     Ok(conn)
 }

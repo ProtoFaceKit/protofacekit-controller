@@ -8,7 +8,8 @@
 #![feature(try_with_capacity)]
 #![feature(core_float_math)]
 
-use crate::bluetooth::ble_server;
+use crate::bluetooth::gatt::ble_server;
+use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::{Expression, Face};
 use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController};
 use crate::hub75::{Hub75Peripherals, setup_hub75_dedicated_core};
@@ -21,7 +22,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::Efuse;
-use esp_hal::gpio::Pin;
+use esp_hal::gpio::{Input, InputConfig, Pin};
 use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
@@ -63,6 +64,18 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
 
     let peripherals = esp_hal::init(config);
+
+    let up_button = Input::new(
+        peripherals.GPIO6,
+        InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
+    );
+    let _down_button = Input::new(
+        peripherals.GPIO7,
+        InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
+    );
+
+    // Holding the up button on boot will reset the stored bonding information
+    let reset_bonding = up_button.is_low();
 
     // Setup the heap allocator
     esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 73744);
@@ -135,6 +148,16 @@ async fn main(spawner: Spawner) {
         FlashStorage::new(peripherals.FLASH).multicore_auto_park(),
     );
 
+    let mut storage = FlashBluetoothStorage::new(flash);
+
+    // Handle resetting bonding data
+    if reset_bonding {
+        defmt::info!("[ble] up button is pressed resetting bonding information");
+        if let Err(error) = storage.reset().await {
+            defmt::error!("[ble] failed to erase flash storage: {}", error);
+        }
+    }
+
     // Run the bluetooth GATT service
-    ble_server(radio_init, peripherals.BT, trng, face_controller, flash).await;
+    ble_server(radio_init, peripherals.BT, trng, face_controller, storage).await;
 }

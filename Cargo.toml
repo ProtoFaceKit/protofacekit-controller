@@ -51,7 +51,7 @@ heapless = "0.9.1"
 esp-hub75 = { version = "0.8.0", features = ["defmt", "esp32s3"] }
 embedded-graphics = "0.8.1"
 nb = "1.1.0"
-sequential-storage = "6.0.1"
+sequential-storage = { version = "6.0.1", features = ["defmt"] }
 embedded-storage-async = "0.4.1"
 embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
 esp-storage = { version = "0.8.1", features = ["esp32s3", "defmt"] }
