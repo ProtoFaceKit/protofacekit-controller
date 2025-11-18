@@ -17,19 +17,20 @@ const MAX_UNCOMPRESSED_FRAMES: usize = 5;
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;
 
-#[derive(defmt::Format, Clone, Copy)]
-pub struct Expression(u8);
+#[repr(u8)]
+#[derive(defmt::Format, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Expression {
+    Idle = 0,
+    Talking = 1,
+    Touched = 2,
+}
 
 impl Expression {
-    pub const IDLE: Expression = Expression(0);
-    pub const TALKING: Expression = Expression(1);
-    pub const TOUCHED: Expression = Expression(2);
-
     pub fn from_value(value: u8) -> Option<Expression> {
         match value {
-            0 => Some(Self::IDLE),
-            1 => Some(Self::TALKING),
-            2 => Some(Self::TOUCHED),
+            0 => Some(Self::Idle),
+            1 => Some(Self::Talking),
+            2 => Some(Self::Touched),
             _ => None,
         }
     }
@@ -46,7 +47,7 @@ pub struct Face {
     current_frame: Option<usize>,
 
     /// Expression data
-    expressions: [Option<FaceExpression>; 2],
+    expressions: [Option<FaceExpression>; 3],
 
     /// Current expression begin written to
     current_expression: Option<usize>,
@@ -98,7 +99,7 @@ pub enum BeginExpressionError {
 impl Face {
     /// Get all the frames for an expression
     pub fn get_expression_frames(&self, expression: Expression) -> Option<&[FaceFrame]> {
-        let expression_index = expression.0 as usize;
+        let expression_index = expression as usize;
         let expression = self.expressions[expression_index].as_ref()?;
 
         self.frames
@@ -113,7 +114,7 @@ impl Face {
 
     /// Begin writing an expression
     pub fn begin_expression(&mut self, expression: Expression) -> Result<(), BeginExpressionError> {
-        let expression_index = expression.0 as usize;
+        let expression_index = expression as usize;
 
         if self.expressions[expression_index].is_some() {
             return Err(BeginExpressionError::ExpressionExists);

@@ -1,6 +1,6 @@
 use crate::{data::Expression, face_control::FaceExpressionController};
 use embassy_executor::task;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     Blocking,
     analog::adc::{Adc, AdcConfig, AdcPin, Attenuation},
@@ -120,6 +120,7 @@ pub async fn microphone_expression_task(
 
     let mut speaking = false;
     let mut peak_envelope = 0.0;
+    let mut last_signal = Instant::now();
 
     // Sound detection loop
     loop {
@@ -137,15 +138,27 @@ pub async fn microphone_expression_task(
             peak_envelope = PEAK_RELEASE_SMOOTH * peak_envelope + PEAK_RELEASE_NEW * ac_amplitude;
         }
 
-        // Speaking state machine
-        if !speaking && peak_envelope > start_threshold {
-            speaking = true;
-            defmt::info!("Speech START. peak={}", peak_envelope);
-            expression_controller.signal(Expression::TALKING);
-        } else if speaking && peak_envelope < stop_threshold {
-            speaking = false;
-            defmt::info!("Speech END. peak={}", peak_envelope);
-            expression_controller.signal(Expression::IDLE);
+        if speaking {
+            // End speaking detection
+            if peak_envelope < stop_threshold {
+                speaking = false;
+                defmt::info!("Speech END. peak={}", peak_envelope);
+            }
+
+            // If 50ms has elapsed since the last expression signal pulse the talking signal
+            if last_signal.elapsed().as_millis() > 50 {
+                expression_controller.signal(Expression::Talking);
+                last_signal = Instant::now();
+            }
+        } else {
+            // Begin speaking when over threshold
+            if peak_envelope > start_threshold {
+                speaking = true;
+                defmt::info!("Speech START. peak={}", peak_envelope);
+
+                expression_controller.signal(Expression::Talking);
+                last_signal = Instant::now();
+            }
         }
 
         // Throttle loop to prevent blocking other tasks

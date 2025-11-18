@@ -1,6 +1,6 @@
 use crate::{data::Expression, face_control::FaceExpressionController};
 use embassy_executor::task;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::Async;
 
 const DEV_ADDR: u8 = 0x39;
@@ -17,6 +17,11 @@ const ENABLE_PON: u8 = 0b0000_0001;
 /// Enable proximity flag
 const ENABLE_PEN: u8 = 0b0000_0100;
 
+/// Distance threshold for detection
+const DISTANCE_THRESHOLD: u8 = 40;
+const DISTANCE_THRESHOLD_ENTER: u8 = DISTANCE_THRESHOLD + 5;
+const DISTANCE_THRESHOLD_EXIT: u8 = DISTANCE_THRESHOLD - 10;
+
 type I2c = esp_hal::i2c::master::I2c<'static, Async>;
 type I2cResult<V> = Result<V, esp_hal::i2c::master::Error>;
 
@@ -30,18 +35,44 @@ pub async fn proximity_expression_task(
         .await
         .expect("failed to enable proximity sensor");
 
-    let threshold = 50;
+    let mut object_close = false;
+    let mut last_signal = Instant::now();
+
     let mut data: [u8; 1] = [0];
 
     loop {
-        read_register(&mut i2c, REG_PDATA, &mut data)
-            .await
-            .expect("failed to read proximity");
+        match read_register(&mut i2c, REG_PDATA, &mut data).await {
+            Ok(value) => value,
+            Err(err) => {
+                defmt::error!("failed to read proximity data: {}", err);
+                Timer::after(Duration::from_micros(10)).await;
+                continue;
+            }
+        };
 
         let value = data[0];
 
-        if value >= threshold {
-            expression_controller.signal(Expression::TOUCHED);
+        if object_close {
+            // End touch detection
+            if value < DISTANCE_THRESHOLD_EXIT {
+                object_close = false;
+                defmt::info!("Touch END = {}", value);
+            }
+
+            // If 50ms has elapsed since the last expression signal pulse the touched signal
+            if last_signal.elapsed().as_millis() > 50 {
+                expression_controller.signal(Expression::Touched);
+                last_signal = Instant::now();
+            }
+        } else {
+            // Begin touch when over threshold
+            if value > DISTANCE_THRESHOLD_ENTER {
+                object_close = true;
+                defmt::info!("Touch START = {}", value);
+
+                expression_controller.signal(Expression::Touched);
+                last_signal = Instant::now();
+            }
         }
 
         Timer::after(Duration::from_micros(10)).await;

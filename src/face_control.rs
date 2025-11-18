@@ -15,6 +15,7 @@ use embassy_sync::{
 };
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{mono_font::MonoTextStyle, prelude::Point, text::Alignment};
+use esp_hal::time::Instant;
 use esp_hub75::Color;
 
 /// Consumer of face data
@@ -171,10 +172,13 @@ impl FaceController {
     }
 }
 
+const EXPRESSION_RESET_DURATION_MS: u64 = 150;
+
 /// Task to render the face
 #[task]
 pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) {
-    let mut expression = Expression::IDLE;
+    let mut expression = Expression::Idle;
+    let mut expression_updated_at = Instant::now();
 
     let mut frame_index = 0;
 
@@ -191,7 +195,28 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
         // Handle expression changes
         if expression_signal.signaled() {
             let next_expression = expression_signal.wait().await;
-            expression = next_expression;
+
+            // Only switch to "next" expression if its a higher priority than
+            // the current expression
+            if next_expression > expression {
+                defmt::info!(
+                    "expression changed to {} from {}",
+                    next_expression,
+                    expression
+                );
+                expression = next_expression;
+            }
+
+            expression_updated_at = Instant::now();
+        }
+
+        // Restore IDLE expression after 100ms since last change
+        if expression != Expression::Idle
+            && expression_updated_at.elapsed().as_millis() > EXPRESSION_RESET_DURATION_MS
+        {
+            expression = Expression::Idle;
+
+            defmt::info!("expression reverted to idle");
         }
 
         if text_signal.signaled() {
