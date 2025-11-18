@@ -47,6 +47,7 @@ impl FaceConsumer {
 }
 
 /// Controller to provide the current expression
+#[derive(Clone, Copy)]
 pub struct FaceExpressionController {
     expression_signal: &'static Signal<CriticalSectionRawMutex, Expression>,
 }

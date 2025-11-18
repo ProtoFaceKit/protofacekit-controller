@@ -23,11 +23,13 @@ pub struct Expression(u8);
 impl Expression {
     pub const IDLE: Expression = Expression(0);
     pub const TALKING: Expression = Expression(1);
+    pub const TOUCHED: Expression = Expression(2);
 
     pub fn from_value(value: u8) -> Option<Expression> {
         match value {
             0 => Some(Self::IDLE),
             1 => Some(Self::TALKING),
+            2 => Some(Self::TOUCHED),
             _ => None,
         }
     }

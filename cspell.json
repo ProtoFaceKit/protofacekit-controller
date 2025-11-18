@@ -13,6 +13,13 @@
     "Efuse",
     "oneshot",
     "Trng",
-    "multicore"
+    "multicore",
+    "Apds",
+    "AICLEAR",
+    "IFORCE",
+    "WTIME",
+    "gconfig",
+    "WLONG",
+    "PDATA"
   ]
 }

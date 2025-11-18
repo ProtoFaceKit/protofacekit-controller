@@ -15,6 +15,7 @@ use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController
 use crate::hub75::{Hub75Peripherals, setup_hub75_dedicated_core};
 use crate::microphone::microphone_expression_task;
 use crate::neopixel::{create_neopixel_driver, show_neopixel_color};
+use crate::proximity::proximity_expression_task;
 use blinksy::color::LinearSrgb;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -23,6 +24,7 @@ use embassy_sync::signal::Signal;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::Efuse;
 use esp_hal::gpio::{Input, InputConfig, Pin};
+use esp_hal::i2c::master::I2c;
 use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
@@ -45,6 +47,7 @@ mod hub75;
 mod macros;
 mod microphone;
 mod neopixel;
+mod proximity;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -161,6 +164,17 @@ async fn main(spawner: Spawner) {
             defmt::error!("[ble] failed to erase flash storage: {}", error);
         }
     }
+
+    let i2c = I2c::new(peripherals.I2C0, esp_hal::i2c::master::Config::default())
+        .expect("failed to create i2c")
+        .with_sda(peripherals.GPIO9)
+        .with_scl(peripherals.GPIO10)
+        .into_async();
+
+    // Run proximity detector
+    spawner
+        .spawn(proximity_expression_task(i2c, face_expression_controller))
+        .expect("failed to spawn microphone task");
 
     // Run the bluetooth GATT service
     ble_server(
