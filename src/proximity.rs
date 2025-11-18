@@ -31,9 +31,10 @@ pub async fn proximity_expression_task(
     expression_controller: FaceExpressionController,
 ) {
     // Enable the sensor and the proximity function
-    write_register(&mut i2c, REG_ENABLE, ENABLE_PON | ENABLE_PEN)
-        .await
-        .expect("failed to enable proximity sensor");
+    if let Err(err) = write_register(&mut i2c, REG_ENABLE, ENABLE_PON | ENABLE_PEN).await {
+        defmt::error!("failed to write proximity enable state: {}", err);
+        return;
+    };
 
     let mut object_close = false;
     let mut last_signal = Instant::now();
