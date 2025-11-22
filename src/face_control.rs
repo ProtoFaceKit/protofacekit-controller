@@ -199,12 +199,21 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
             // Only switch to "next" expression if its a higher priority than
             // the current expression
             if next_expression > expression {
-                defmt::info!(
-                    "expression changed to {} from {}",
-                    next_expression,
-                    expression
-                );
-                expression = next_expression;
+                // Check if we actually have the expression before trying to switch
+                let has_expression = {
+                    let face = face.lock().await;
+                    face.get_expression_frames(next_expression)
+                        .is_some_and(|expression| !expression.is_empty())
+                };
+
+                if has_expression {
+                    defmt::info!(
+                        "expression changed to {} from {}",
+                        next_expression,
+                        expression
+                    );
+                    expression = next_expression;
+                }
             }
 
             expression_updated_at = Instant::now();
