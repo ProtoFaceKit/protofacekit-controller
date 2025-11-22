@@ -12,7 +12,7 @@ pub const FRAME_HEIGHT: usize = DISPLAY_HEIGHT;
 const MAX_FRAMES_PER_FACE: usize = 4096;
 
 /// Maximum number of uncompressed frame equivalents to allow
-const MAX_UNCOMPRESSED_FRAMES: usize = 5;
+const MAX_UNCOMPRESSED_FRAMES: usize = 50;
 
 /// Capacity for storing pixel data
 const PIXEL_DATA_CAPACITY: usize = FRAME_WIDTH * FRAME_HEIGHT * MAX_UNCOMPRESSED_FRAMES;

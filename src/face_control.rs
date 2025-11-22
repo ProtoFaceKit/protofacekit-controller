@@ -163,7 +163,7 @@ impl FaceController {
             .mutex_guard
             .as_mut()
             .ok_or(FaceControllerError::InvalidState)?;
-        defmt::info!("writing pixel data");
+
         let pixels = RLESlicePixelIterator::new(pixel_data);
 
         face.push_pixels(pixels)
