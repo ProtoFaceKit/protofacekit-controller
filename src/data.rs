@@ -189,6 +189,8 @@ impl Face {
     pub fn reset(&mut self) {
         self.pixels.clear();
         self.frames.clear();
+        self.current_frame = None;
+        self.current_expression = None;
 
         for i in 0..self.expressions.len() {
             self.expressions[i] = None;
