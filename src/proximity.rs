@@ -1,4 +1,7 @@
-use crate::{data::Expression, face_control::FaceExpressionController};
+use crate::{
+    data::Expression,
+    face_control::{EXPRESSION_TICK_MS, FaceExpressionController},
+};
 use embassy_executor::task;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::Async;
@@ -61,7 +64,7 @@ pub async fn proximity_expression_task(
             }
 
             // If 50ms has elapsed since the last expression signal pulse the touched signal
-            if last_signal.elapsed().as_millis() > 50 {
+            if last_signal.elapsed().as_millis() > EXPRESSION_TICK_MS {
                 expression_controller.signal(Expression::Touched);
                 last_signal = Instant::now();
             }

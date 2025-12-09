@@ -172,13 +172,26 @@ impl FaceController {
     }
 }
 
+/// Time in milliseconds of expression inactivity before the
+/// expression is returned to the default
 const EXPRESSION_RESET_DURATION_MS: u64 = 150;
+
+/// Time between each signaling tick for expressions
+///
+/// Expression "providers" must tick at this rate to ensure
+/// they are maintained as the current expression
+pub const EXPRESSION_TICK_MS: u64 = 50;
+
+/// Time that a expression must been unchanged for before we can
+/// switch to a "lesser" valued expression
+pub const EXPRESSION_LESSER_DURATION_MS: u64 = EXPRESSION_TICK_MS * 3;
 
 /// Task to render the face
 #[task]
 pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) {
     let mut expression = Expression::Idle;
     let mut expression_updated_at = Instant::now();
+    let mut expression_signal_at = Instant::now();
 
     let mut frame_index = 0;
 
@@ -197,8 +210,11 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
             let next_expression = expression_signal.wait().await;
 
             // Only switch to "next" expression if its a higher priority than
-            // the current expression
-            if next_expression > expression {
+            // the current expression OR if the current expression has not been
+            // pumped
+            if next_expression > expression
+                || expression_updated_at.elapsed().as_millis() > EXPRESSION_LESSER_DURATION_MS
+            {
                 // Check if we actually have the expression before trying to switch
                 let has_expression = {
                     let face = face.lock().await;
@@ -214,14 +230,18 @@ pub async fn face_render_task(face: FaceConsumer, mut driver: FaceMatrixDriver) 
                     );
                     expression = next_expression;
                 }
+            } else if expression == next_expression {
+                // Update the time for the current expression to prevent switching to a lesser expression
+                expression_updated_at = Instant::now();
             }
 
-            expression_updated_at = Instant::now();
+            // Update the last signaled time to prevent returning to IDLE
+            expression_signal_at = Instant::now();
         }
 
         // Restore IDLE expression after 100ms since last change
         if expression != Expression::Idle
-            && expression_updated_at.elapsed().as_millis() > EXPRESSION_RESET_DURATION_MS
+            && expression_signal_at.elapsed().as_millis() > EXPRESSION_RESET_DURATION_MS
         {
             expression = Expression::Idle;
 
