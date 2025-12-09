@@ -1,8 +1,10 @@
 use crate::{
     data::Expression,
     face_control::{EXPRESSION_TICK_MS, FaceExpressionController},
+    mk_static,
 };
 use embassy_executor::task;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     Blocking,
@@ -94,11 +96,30 @@ async fn calibrate_mic(
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct MicCalibrationController {
+    pub begin_signal: &'static Signal<CriticalSectionRawMutex, ()>,
+    pub finish_signal: &'static Signal<CriticalSectionRawMutex, ()>,
+}
+
+impl MicCalibrationController {
+    pub fn new() -> Self {
+        let begin_signal = mk_static!(Signal::<CriticalSectionRawMutex, ()>, Signal::new());
+        let finish_signal = mk_static!(Signal::<CriticalSectionRawMutex, ()>, Signal::new());
+
+        Self {
+            begin_signal,
+            finish_signal,
+        }
+    }
+}
+
 #[task]
 pub async fn microphone_expression_task(
     mic_pin: MicPin,
     adc_pin: MicAdcPin,
     expression_controller: FaceExpressionController,
+    calibration_controller: MicCalibrationController,
 ) {
     // ADC setup
     let mut adc2_config = AdcConfig::new();
@@ -106,19 +127,14 @@ pub async fn microphone_expression_task(
     let mut adc = Adc::new(adc_pin, adc2_config);
 
     // Perform calibration
-    let MicCalibration {
-        dc_center,
-        noise_peak,
-        start_threshold,
-        stop_threshold,
-    } = calibrate_mic(&mut adc, &mut pin).await;
+    let mut calibration = calibrate_mic(&mut adc, &mut pin).await;
 
     defmt::info!(
         "microphone calibrated: DC={} noise={} start={} stop={}",
-        dc_center,
-        noise_peak,
-        start_threshold,
-        stop_threshold
+        calibration.dc_center,
+        calibration.noise_peak,
+        calibration.start_threshold,
+        calibration.stop_threshold
     );
 
     let mut speaking = false;
@@ -127,10 +143,23 @@ pub async fn microphone_expression_task(
 
     // Sound detection loop
     loop {
+        // Handle calibration requested
+        if calibration_controller.begin_signal.signaled() {
+            calibration = calibrate_mic(&mut adc, &mut pin).await;
+            defmt::info!(
+                "microphone calibrated: DC={} noise={} start={} stop={}",
+                calibration.dc_center,
+                calibration.noise_peak,
+                calibration.start_threshold,
+                calibration.stop_threshold
+            );
+            calibration_controller.finish_signal.signal(());
+        }
+
         let raw = read_mic_pin(&mut adc, &mut pin).await;
 
         // Calculate AC amplitude (signal minus DC offset)
-        let ac_amplitude = (raw - dc_center).abs();
+        let ac_amplitude = (raw - calibration.dc_center).abs();
 
         // Peak envelope detector (fast attack, slow release)
         if ac_amplitude > peak_envelope {
@@ -143,7 +172,7 @@ pub async fn microphone_expression_task(
 
         if speaking {
             // End speaking detection
-            if peak_envelope < stop_threshold {
+            if peak_envelope < calibration.stop_threshold {
                 speaking = false;
                 defmt::info!("Speech END. peak={}", peak_envelope);
             }
@@ -155,7 +184,7 @@ pub async fn microphone_expression_task(
             }
         } else {
             // Begin speaking when over threshold
-            if peak_envelope > start_threshold {
+            if peak_envelope > calibration.start_threshold {
                 speaking = true;
                 defmt::info!("Speech START. peak={}", peak_envelope);
 

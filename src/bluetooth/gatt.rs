@@ -5,6 +5,7 @@
 use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::Expression;
 use crate::face_control::{FaceController, TextDisplay};
+use crate::microphone::MicCalibrationController;
 use alloc::string::ToString;
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, select};
@@ -34,6 +35,10 @@ pub struct Server {
 /// Service for controlling the ProtoFace display
 #[gatt_service(uuid = "bd6f7967-023c-4f0b-aad4-16a8a116f62c")]
 struct ProtoFaceService {
+    /// Calibrate the microphone
+    #[characteristic(uuid = "6594db1e-650c-4c39-be44-bdc19e220752", write)]
+    calibrate_mic: bool,
+
     /// Begin face upload
     #[characteristic(uuid = "2a3f5ae2-c3bd-4561-945b-ea5da0787576", write)]
     begin_face: bool,
@@ -55,19 +60,37 @@ struct ProtoFaceService {
     frame_chunk: heapless::Vec<u8, 248>,
 }
 
+pub struct BleServerData<'a> {
+    pub radio_init: esp_radio::Controller<'a>,
+    pub device: BT<'static>,
+    //
+    pub rand: Trng,
+    //
+    pub face_controller: FaceController,
+    pub mic_calibration: MicCalibrationController,
+    //
+    pub storage: FlashBluetoothStorage,
+    //
+    pub up_button: Input<'static>,
+    pub down_button: Input<'static>,
+}
+
 /// Execute a BLE GATT server
 pub async fn ble_server(
-    radio_init: esp_radio::Controller<'_>,
-    device: BT<'static>,
-    //
-    mut rand: Trng,
-    //
-    face: FaceController,
-    //
-    mut storage: FlashBluetoothStorage,
-    //
-    mut up_button: Input<'static>,
-    mut down_button: Input<'static>,
+    BleServerData {
+        radio_init,
+        device,
+        //
+        mut rand,
+        //
+        face_controller,
+        mic_calibration,
+        //
+        mut storage,
+        //
+        mut up_button,
+        mut down_button,
+    }: BleServerData<'_>,
 ) {
     let transport = BleConnector::new(&radio_init, device, Default::default()).unwrap();
     let ble_controller = ExternalController::<_, 20>::new(transport);
@@ -125,7 +148,8 @@ pub async fn ble_server(
                 &mut storage,
                 &server,
                 connection,
-                face.clone(),
+                face_controller.clone(),
+                mic_calibration,
                 &mut up_button,
                 &mut down_button,
             )
@@ -155,10 +179,12 @@ pub async fn gatt_events_task(
     conn: GattConnection<'_, '_, PacketPool>,
     //
     mut face: FaceController,
+    mic_calibration: MicCalibrationController,
     //
     up_button: &mut Input<'static>,
     down_button: &mut Input<'static>,
 ) -> Result<(), Error> {
+    let calibrate_mic = server.face_service.calibrate_mic;
     let begin_face = server.face_service.begin_face;
     let display_face = server.face_service.display_face;
     let begin_expression = server.face_service.begin_expression;
@@ -242,6 +268,13 @@ pub async fn gatt_events_task(
                             match event.handle() {
                                 h if h == begin_face.handle => {
                                     face.begin_face().await;
+                                }
+                                h if h == calibrate_mic.handle => {
+                                    // Signal beginning calibration
+                                    mic_calibration.begin_signal.signal(());
+
+                                    // Wait for the completion notification
+                                    mic_calibration.finish_signal.wait().await;
                                 }
 
                                 h if h == display_face.handle => {

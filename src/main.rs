@@ -8,12 +8,12 @@
 #![feature(try_with_capacity)]
 #![feature(core_float_math)]
 
-use crate::bluetooth::gatt::ble_server;
+use crate::bluetooth::gatt::{BleServerData, ble_server};
 use crate::bluetooth::storage::FlashBluetoothStorage;
 use crate::data::{Expression, Face};
 use crate::face_control::{FaceConsumer, FaceController, FaceExpressionController, TextDisplay};
 use crate::hub75::{Hub75Peripherals, setup_hub75_dedicated_core};
-use crate::microphone::microphone_expression_task;
+use crate::microphone::{MicCalibrationController, microphone_expression_task};
 use crate::neopixel::{create_neopixel_driver, show_neopixel_color};
 use crate::proximity::proximity_expression_task;
 use blinksy::color::LinearSrgb;
@@ -93,7 +93,7 @@ async fn main(spawner: Spawner) {
 
     // Initialize randomness source
     let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
-    let trng = Trng::try_new().unwrap();
+    let rand = Trng::try_new().unwrap();
 
     let mut driver = create_neopixel_driver(peripherals.GPIO4, peripherals.RMT);
     show_neopixel_color(&mut driver, LinearSrgb::new(1.0, 0.0, 0.0), 0.01).await;
@@ -112,12 +112,15 @@ async fn main(spawner: Spawner) {
     let face_consumer = FaceConsumer::new(face, expression_signal, text_signal);
     let face_controller = FaceController::new(face, text_signal);
 
+    let mic_calibration = MicCalibrationController::new();
+
     // Run microphone listener
     spawner
         .spawn(microphone_expression_task(
             peripherals.GPIO11,
             peripherals.ADC2,
             face_expression_controller,
+            mic_calibration,
         ))
         .expect("failed to spawn microphone task");
 
@@ -177,14 +180,15 @@ async fn main(spawner: Spawner) {
         .expect("failed to spawn microphone task");
 
     // Run the bluetooth GATT service
-    ble_server(
+    ble_server(BleServerData {
         radio_init,
-        peripherals.BT,
-        trng,
+        device: peripherals.BT,
+        rand,
         face_controller,
+        mic_calibration,
         storage,
         up_button,
         down_button,
-    )
+    })
     .await;
 }
